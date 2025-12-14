@@ -1,0 +1,23 @@
+# Data Manipulation
+numpy
+pandas
+
+# Image Processing
+opencv-python
+Pillow
+
+# Machine Learning (The Brain)
+tensorflow
+scikit-learn
+
+# Backend API (The Server)
+fastapi
+uvicorn
+python-multipart
+
+# Frontend UI (The App)
+streamlit
+
+# Utilities
+python-dotenv
+requests

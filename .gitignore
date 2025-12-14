@@ -1,0 +1,16 @@
+# Ignore Data
+data/
+data/raw/
+data/processed/
+
+# Ignore Models (Too big for Git, usually)
+models/*.h5
+
+# Ignore Python Cache
+__pycache__/
+*.pyc
+
+# Ignore Environment
+.env
+venv/
+.vscode/
