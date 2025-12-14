@@ -22,7 +22,10 @@ SortWise uses a **MobileNetV2** Convolutional Neural Network (Transfer Learning)
 * **Model:** Fine-tuned MobileNetV2 with custom head (GlobalAveragePooling + Dropout) for efficiency on consumer hardware.
 * **Data Augmentation:** Used `ImageDataGenerator` (rotation, zoom, shear) to improve generalization on small classes like Mixed Waste.
 
+
 ## 📂 Project Structure
+
+```text
 finnish-waste-sorter/
 ├── data/               # Raw and Processed data (GitIgnored)
 ├── models/             # Trained .h5 models
