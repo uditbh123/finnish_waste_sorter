@@ -1,4 +1,5 @@
 import os
+import tensorflow as tf 
 from tensorflow.keras.preprocessing.image import ImageDataGenerator 
 from tensorflow.keras.applications import MobileNetV2 
 from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
@@ -17,14 +18,15 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 # 2. Settings
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
-EPOCHS = 8 # How many times the AI Studies the data (takes 10-15mins)
+EPOCHS_PHASE_1 = 8 # fast learning 
+EPOCHS_PHASE_2 = 8 # slow, careful fine-tuning
 
 # 3. Data Augmentation (The "Magic")
 #This creates fake variations (zoomed, rotated) to make the AI smarter.
 # It is critical for your small "Mixed" waste category.
 train_datagen = ImageDataGenerator(
     rescale=1./255, #Normalize pixel values (0-1 instead of 0-225)
-    rotation_range = 20, #Rotate slightly
+    rotation_range = 30, #Rotate slightly
     width_shift_range = 0.2, # Move left/right
     height_shift_range = 0.2, # Move up/down
     horizontal_flip = True, # Mirror Image 
@@ -53,41 +55,53 @@ validation_generator = train_datagen.flow_from_directory(
     shuffle=False
 )
 
-# Print the class mapping to know which ID is which (e.g., 0=Biowaste, 1=Glass)
-print(f"✅ Classes found: {train_generator.class_indices}")
+# Build Model (Phase 1: Frozen Base)
+print("\n🏗️ Building Model (Phase 1)...")
+base_model = MobileNetV2(weights='imagenet', include_top =False, input_shape=(224, 224, 3))
+base_model.trainable = False # Freeze the base 
 
-# 5. Build the Model (transfer Learning)
-print("🏗️ Building the Model...")
-
-# Load MobileNetv2 (pre-trained on ImageNet) but Cut Off the top (head)
-base_model = MobileNetV2(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
-
-# Freeze the base (so we don't destroy the pre-trained knowledge)
-base_model.trainable = False 
-
-# Add our own "Finnish Recycling Head"
-x = base_model.output
+x = base_model.output 
 x = GlobalAveragePooling2D()(x)
-x = Dropout(0.2)(x) # Prevents overfitting (memorizing instead of learning)
+x = Dropout(0.2)(x)
 predictions = Dense(train_generator.num_classes, activation='softmax')(x)
 
 model = Model(inputs=base_model.input, outputs=predictions)
 
-# 6. Compile 
 model.compile(optimizer=Adam(learning_rate=0.001),
               loss='categorical_crossentropy',
               metrics=['accuracy'])
-
-# 7. train
-print("🚀 Starting training... (This will take time!)")
+            
+# 5. Train Phase 1
+print("🚀 Starting Phase 1 Training (Standard)...")
 history = model.fit(
     train_generator,
-    epochs=EPOCHS,
+    epochs=EPOCHS_PHASE_1,
     validation_data=validation_generator
 )
 
-# 8. Save the Brain
-print("💾 Saving the model...")
+# 6. Fine-Tuning (phase2: Unfrozen)
+print("\n🔓 Unfreezing top layers for Fine-Tuning...")
+base_model.trainable = True
+
+# Freezing all layers except the last 30
+# This allows the AI to adjust its "eyes" to see finnish shapes
+for layer in base_model.layers[:-30]:
+    layer.trainable = False
+
+# Recompile with VERY LOW learning rate (so we don't break what it already knows)
+model.compile(optimizer=Adam(learning_rate=1e-5),  # 100x slower learning
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
+
+print("🚀 Starting Phase 2 Training (Fine-Tuning)...")
+history_fine = model.fit(
+    train_generator,
+    epochs=EPOCHS_PHASE_2,
+    validation_data=validation_generator
+)
+
+# 7. Save
+print("💾 Saving the Smart Model...")
 model_path = os.path.join(MODEL_DIR, "waste_sorter_model.h5")
 model.save(model_path)
 print(f"🎉 Model saved successfully at: {model_path}")
