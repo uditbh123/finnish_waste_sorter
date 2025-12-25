@@ -22,8 +22,7 @@ class_labels = {
     1: 'Cardboard (Kartonki) 📦',
     2: 'Glass (Lasi) 🍷',
     3: 'Metal (Metalli) 🥫',
-    4: 'Mixed Waste (Sekajäte) 🗑️',
-    5: 'Plastic (Muovi) 🥤'
+    4: 'Plastic (Muovi) 🥤'
 }
 
 def predict_image(image_path):
@@ -67,7 +66,7 @@ if __name__ == "__main__":
         predict_image(user_input.strip('"').strip('"'))
     else:
         # Check if default file exists before running
-        if os.path.exist(test_image):
+        if os.path.exists(test_image):
             print(f"👉 No input provided. Testing default image: {test_image}")
             predict_image(test_image)
         else:

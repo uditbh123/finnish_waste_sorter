@@ -1,42 +1,34 @@
 import os
-import tensorflow as tf 
-from tensorflow.keras.preprocessing.image import ImageDataGenerator 
-from tensorflow.keras.applications import MobileNetV2 
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
 from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers import Adam 
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.losses import CategoricalFocalCrossentropy
+from sklearn.utils.class_weight import compute_class_weight
 
-# 1. Setup paths 
-# This finds my project folder automatically
+# 1. Setup paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data", "processed")
 MODEL_DIR = os.path.join(BASE_DIR, "models")
-
-# Create the models folder if it doesn't exist 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 # 2. Settings
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
-EPOCHS_PHASE_1 = 8 # fast learning 
-EPOCHS_PHASE_2 = 8 # slow, careful fine-tuning
+EPOCHS_PHASE_1 = 8
+EPOCHS_PHASE_2 = 8
 
-# 3. Data Augmentation (The "Magic")
-#This creates fake variations (zoomed, rotated) to make the AI smarter.
-# It is critical for your small "Mixed" waste category.
+# 3. Data Loading 
+# I use standard generator because I have already created augmented files in Step 1
 train_datagen = ImageDataGenerator(
-    rescale=1./255, #Normalize pixel values (0-1 instead of 0-225)
-    rotation_range = 30, #Rotate slightly
-    width_shift_range = 0.2, # Move left/right
-    height_shift_range = 0.2, # Move up/down
-    horizontal_flip = True, # Mirror Image 
-    fill_mode='nearest', 
-    validation_split = 0.2 # Use 20% of data for testing
+    rescale=1./255,
+    validation_split=0.2
 )
 
-print("⏳ Loading images... this might take a moment.")
-
-# 4. Load data (Train & Validation Split)
+print("⏳ Loading images...")
 train_generator = train_datagen.flow_from_directory(
     DATA_DIR,
     target_size=IMG_SIZE,
@@ -55,53 +47,60 @@ validation_generator = train_datagen.flow_from_directory(
     shuffle=False
 )
 
-# Build Model (Phase 1: Frozen Base)
-print("\n🏗️ Building Model (Phase 1)...")
-base_model = MobileNetV2(weights='imagenet', include_top =False, input_shape=(224, 224, 3))
-base_model.trainable = False # Freeze the base 
+# 4. Compute Class Weights (To fix imbalance)
+print("⚖️  Computing Class Weights...")
+class_weights = compute_class_weight(
+    class_weight='balanced',
+    classes=np.unique(train_generator.classes),
+    y=train_generator.classes
+)
+class_weight_dict = dict(enumerate(class_weights))
+print(f"   Weights: {class_weight_dict}")
 
-x = base_model.output 
+# 5. Build Model
+print("\n🏗️  Building Model...")
+base_model = MobileNetV2(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
+base_model.trainable = False
+
+x = base_model.output
 x = GlobalAveragePooling2D()(x)
 x = Dropout(0.2)(x)
 predictions = Dense(train_generator.num_classes, activation='softmax')(x)
 
 model = Model(inputs=base_model.input, outputs=predictions)
 
+# 6. Compile with FOCAL LOSS
+# This forces the model to focus on the hard "Valio" cases
 model.compile(optimizer=Adam(learning_rate=0.001),
-              loss='categorical_crossentropy',
+              loss=CategoricalFocalCrossentropy(alpha=0.25, gamma=2.0),
               metrics=['accuracy'])
-            
-# 5. Train Phase 1
-print("🚀 Starting Phase 1 Training (Standard)...")
+
+# 7. Train Phase 1
+print("🚀 Phase 1: Training Head...")
 history = model.fit(
     train_generator,
     epochs=EPOCHS_PHASE_1,
     validation_data=validation_generator
+    #class_weight=class_weight_dict 
 )
 
-# 6. Fine-Tuning (phase2: Unfrozen)
-print("\n🔓 Unfreezing top layers for Fine-Tuning...")
+# 8. Train Phase 2 (Fine-Tuning)
+print("\n🔓 Phase 2: Unfreezing top layers...")
 base_model.trainable = True
-
-# Freezing all layers except the last 30
-# This allows the AI to adjust its "eyes" to see finnish shapes
-for layer in base_model.layers[:-30]:
+for layer in base_model.layers[:-40]: # Only train top 40 layers
     layer.trainable = False
 
-# Recompile with VERY LOW learning rate (so we don't break what it already knows)
-model.compile(optimizer=Adam(learning_rate=1e-5),  # 100x slower learning
-              loss='categorical_crossentropy',
+model.compile(optimizer=Adam(learning_rate=1e-5),
+              loss=CategoricalFocalCrossentropy(alpha=0.25, gamma=2.0),
               metrics=['accuracy'])
 
-print("🚀 Starting Phase 2 Training (Fine-Tuning)...")
 history_fine = model.fit(
     train_generator,
     epochs=EPOCHS_PHASE_2,
     validation_data=validation_generator
+    #class_weight=class_weight_dict
 )
 
-# 7. Save
-print("💾 Saving the Smart Model...")
-model_path = os.path.join(MODEL_DIR, "waste_sorter_model.h5")
-model.save(model_path)
-print(f"🎉 Model saved successfully at: {model_path}")
+# 9. Save
+model.save(os.path.join(MODEL_DIR, "waste_sorter_model.h5"))
+print("🎉 Advanced Model Saved.")
