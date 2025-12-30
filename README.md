@@ -47,6 +47,34 @@ After training the MobileNetV2 model (achieving **88% training accuracy** and **
     * *Prediction:* **Plastic** (73.8% confidence).
     * *Insight:* **Success!** The model correctly identified plastic when the object was deformed. Since glass shatters and does not crinkle, the AI successfully used the object's physical properties/geometry to make the correct classification.
 
+## 📅 Dev Log: December 30, 2025
+*Milestone: Phase 2 Fine-Tuning Complete & Batch Testing.*
+
+### 🚀 Progress
+We successfully fine-tuned the top layers of the model, achieving a **Training Accuracy of 95.3%** and **Validation Accuracy of ~81.6%**. The model is now capable of running batch predictions on folders of mixed images.
+
+### 🧪 Latest Stress Test Results
+We ran a "Blind Batch Test" on random internet images. The results revealed clear strengths and biases:
+
+#### ✅ The Wins
+1.  **Biowaste Mastery:** The model is incredibly confident (>99%) with organic matter like banana peels, compost, and vegetables.
+2.  **Texture Recognition:** Successfully identified an **IKEA Box** as *Cardboard* (86%) despite the complex logos, proving it is learning feature shapes.
+
+#### ⚠️ The "Background Bias" Discovery
+The model revealed a critical flaw in how it perceives context:
+* **The "Dirty Bottle" Error:**
+    * *Input:* A plastic bottle sitting on a pile of dirt/trash.
+    * *Prediction:* **Biowaste** (99% confidence).
+    * *Insight:* The model ignored the bottle and classified the **background** (dirt) as compost. This suggests the training data for "Plastic" was too clean, while "Biowaste" data was mostly messy/brown.
+
+* **The "Color Trap":**
+    * *Input:* A plain brown cardboard box.
+    * *Prediction:* **Biowaste** (62% confidence).
+    * *Insight:* Without distinct texture cues (like corrugation), the model confuses the color **brown** with potato peels or leaves.
+
+### 🔮 Next Steps
+* **Data Augmentation:** Implement rotation and zooming to force the model to focus on object shape rather than background color.
+* **Targeted Data Collection:** Add more images of "Plastic on dirt" and "Clean Cardboard" to break the current biases.
 ---
 
 ## 📂 Project Structure
@@ -59,7 +87,8 @@ finnish-waste-sorter/
 │   ├── preprocess.py   # Image resizing and cleaning
 │   ├── balance_data.py # Class balancing logic
 │   ├── train_model.py  # MobileNetV2 training loop
-│   └── predict.py      # Inference script for testing real images
+│   └── predict.py      # Batch inference script for folder scanning
+├── test_dump/          # Local testing images (GitIgnored)
 ├── .gitignore          # Files to exclude from Git
 ├── requirements.txt    # Project dependencies
 └── README.md           # Project documentation
