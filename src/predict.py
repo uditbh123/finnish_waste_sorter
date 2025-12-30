@@ -2,72 +2,83 @@ import os
 import numpy as np 
 import tensorflow as tf
 from tensorflow.keras.preprocessing import image
+from tensorflow.keras.models import load_model
 
 # 1. Setup paths 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "models", "waste_sorter_model.h5")
+MODEL_PATH = os.path.join("models", "waste_sorter_model.h5")
+CLASS_NAMES = ['Biowaste', 'Cardboard', 'Glass', 'Metal', 'Paper', 'Plastic']
+IMG_SIZE = (224, 224)
 
-# 2. Load the Brain
-print(f"⏳ Loading model from: {MODEL_PATH}")
-try:
-    model = tf.keras.models.load_model(MODEL_PATH)
-    print("✅ Model loaded successfully!")
-except Exception as e:
-    print(f"❌ Error loading model: {e}")
-    exit()
+def load_and_prep_image(filename, img_shape=224):
+    """
+    Reads an image from filename, turns it into a tensor 
+    reshapes it to (ima_shapes, imag_shape,) and rescales it.
+    """
+    img = tf.io.read_file(filename)
+    img = tf.image.decode_image(img, channels=3, expand_animations=False)
+    img.set_shape([None, None, 3])
+    img = tf.image.resize(img, size=[img_shape, img_shape])
+    img = img / 255.0
+    return img
 
-# 3. Define the labels (must match the training order)
-class_labels = {
-    0: 'Biowaste (Biojäte) 🍎',
-    1: 'Cardboard (Kartonki) 📦',
-    2: 'Glass (Lasi) 🍷',
-    3: 'Metal (Metalli) 🥫',
-    4: 'Plastic (Muovi) 🥤'
-}
+def predict_single_image(model, filepath):
+    """
+    Predicts a single image and prints the result.
+    """
+    try:
+        # Load and preproces
+        img = load_and_prep_image(filepath)
 
-def predict_image(image_path):
-    if not os.path.exists(image_path):
-        print(f"❌ Error: File not found at {image_path}")
+        # make prediction (add batch dimension)
+        pred = model.predict(tf.expand_dims(img, axis=0), verbose=0)
+
+        # Get the predicted class index
+        pred_class_index = np.argmax(pred)
+        pred_class_name = CLASS_NAMES[pred_class_index]
+        confidence = tf.reduce_max(pred) * 100
+
+        print(f"\n📸 Image: {os.path.basename(filepath)}")
+        print(f"🤖 AI Prediction: {pred_class_name}")
+        print(f"📊 Confidence: {confidence:.2f}%")
+        print("-" * 30)
+
+    except Exception as e:
+        print(f"⚠️ Error processing {os.path.basename(filepath)}: {e}")
+
+def main():
+    print("⏳ Loading model from:", MODEL_PATH)
+    try:
+        model = load_model(MODEL_PATH)
+        print("✅ Model loaded successfully!")
+    except Exception as e:
+        print(f"❌ Failed to load model: {e}")
         return
     
-    # 4. Preprocess the image
-    # We must treat the image exactly like we did during the training
-    try:
-        img = image.load_img(image_path, target_size=(224, 224))
-        img_array = image.img_to_array(img)
-        img_array = np.expand_dims(img_array, axis=0) #Make it a batch of 1
-        img_array /= 255.0 #Normalize (0-1)
-
-        # 5. Ask the AI
-        predictions = model.predict(img_array)
-        confidence = np.max(predictions) # How sure is it?
-        predicted_class = np.argmax(predictions) # which category is it?
-
-        # Show Result
-        label = class_labels[predicted_class]
-        print(f"\n📸 Image: {os.path.basename(image_path)}")
-        print(f"🤖 AI Prediction: {label}")
-        print(f"📊 Confidence: {confidence * 100:.2f}%")
-        print("-" * 30)
-    except Exception as e:
-        print(f"❌ Error processing image: {e}")
-
-# Test Area
-if __name__ == "__main__":
-    # path to a default image for quick testing
-    test_image = os.path.join(BASE_DIR, "data", "processed", "glass", "glass1.jpg")
-
     print("\n--- 🇫🇮 Finnish Waste Sorter AI ---")
-    # Ask user for input
-    user_input = input("Enter path to an image (or press Enter to run default test): ").strip()
+    user_input = input('Enter path to an image OR a folder of images: ').strip().strip('"')
 
-    if user_input:
-        # Strip quotes just in case the user drag & drops a file
-        predict_image(user_input.strip('"').strip('"'))
+    if os.path.isdir(user_input):
+        # Folder Mode
+        print(f"\n📂 Processing folder: {user_input}")
+        valid_extensions = ('.jpg', '.jpeg', '.png', '.webp', '.bmp')
+
+        files = [f for f in os.listdir(user_input) if f.lower().endswith(valid_extensions)]
+
+        if not files:
+            print("⚠️ No valid image files found in the folder.")
+        else: 
+            print(f"🔍 Found {len(files)} image(s). Starting predictions...\n")
+            for file in files:
+                full_path = os.path.join(user_input, file)
+                predict_single_image(model, full_path)
+
+    elif os.path.isfile(user_input):
+        # single file mode
+        predict_single_image(model, user_input)
+
     else:
-        # Check if default file exists before running
-        if os.path.exists(test_image):
-            print(f"👉 No input provided. Testing default image: {test_image}")
-            predict_image(test_image)
-        else:
-            print("⚠️ Default test image not found. Please provide a specific path.")
+        print("❌ Invalid path. Please try again.")
+
+if __name__ == "__main__":
+    main()
+    
