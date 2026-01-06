@@ -75,19 +75,49 @@ The model revealed a critical flaw in how it perceives context:
 ### 🔮 Next Steps
 * **Data Augmentation:** Implement rotation and zooming to force the model to focus on object shape rather than background color.
 * **Targeted Data Collection:** Add more images of "Plastic on dirt" and "Clean Cardboard" to break the current biases.
+
+## 📅 Dev Log: January 6, 2026
+*Milestone: Visual Interface & Critical Logic Fixes.*
+
+### 🚀 Major Feature: Web Interface (GUI)
+Moved away from command-line scripts and built a **Streamlit Web App** (`src/app.py`).
+* **Why:** To visualize model confidence scores and debug "borderline" predictions in real-time.
+* **Feature:** Users can now drag-and-drop images and see a breakdown of probabilities (e.g., "55% Plastic, 45% Paper").
+
+### 🐛 Bug Fix: The "Plastic is Paper" Error
+**The Problem:** The model was consistently labeling plastic bottles as "Paper" in the CLI, despite high confidence.
+**The Root Cause:** A "silent shift" in class mapping.
+* The training data contained **5 classes** (Paper folder was deleted previously).
+* The prediction code expected **6 classes** (including Paper).
+* **Result:** The model predicted Index 4 (Plastic), but the code mapped Index 4 to "Paper".
+**The Fix:** Updated `CLASS_NAMES` in `app.py` to dynamically match the actual 5-class training structure.
+
+### 📉 Current Challenge: The "Brown Box" Bias
+**Issue:** The model frequently misclassifies **Cardboard** as **Biowaste** (~60% confidence).
+**Analysis:** The model is over-relying on **color** (Brown) rather than **shape** (Square edges). Since most biowaste images are brownish (dirt/compost), the model assumes "Brown = Bio".
+
+### 🔮 Next Steps
+* **Advanced Augmentation:** Investigate "Color Jitter" or Edge Detection to force the model to focus on geometry over color.
+* **UI Polish:** Add a "Feedback Loop" button so users can correct the AI when it makes a mistake.
 ---
+
 
 ## 📂 Project Structure
 
 ```text
 finnish-waste-sorter/
+├── app/                # Application specific resources
 ├── data/               # Raw and Processed data (GitIgnored)
 ├── models/             # Trained .h5 models
 ├── src/                # Source code
-│   ├── preprocess.py   # Image resizing and cleaning
+│   ├── app.py          # Streamlit Web Interface (Main Entry Point)
+│   ├── augment_finnish.py # Specific augmentation for Finnish brands
 │   ├── balance_data.py # Class balancing logic
-│   ├── train_model.py  # MobileNetV2 training loop
-│   └── predict.py      # Batch inference script for folder scanning
+│   ├── check_data.py   # Utility to verify dataset integrity
+│   ├── predict.py      # CLI Batch inference script
+│   ├── preprocess.py   # Image resizing and cleaning
+│   ├── reset_data.py   # Utility to reset processed data
+│   └── train_model.py  # MobileNetV2 training loop
 ├── test_dump/          # Local testing images (GitIgnored)
 ├── .gitignore          # Files to exclude from Git
 ├── requirements.txt    # Project dependencies
