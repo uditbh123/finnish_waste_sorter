@@ -5,7 +5,7 @@ from tensorflow.keras.models import load_model
 
 # --- CONFIGURATION ---
 # UPDATE: Pointing to the new 'augmented' model
-MODEL_PATH = os.path.join("models", "waste_sorter_augmented.h5")
+MODEL_PATH = os.path.join("models", "waste_sorter_model.h5")
 CLASS_NAMES = ['Biowaste', 'Cardboard', 'Glass', 'Metal', 'Paper', 'Plastic']
 IMG_SIZE = (224, 224)
 
