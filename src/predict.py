@@ -1,88 +1,105 @@
-import os
-import numpy as np
 import tensorflow as tf
-from tensorflow.keras.models import load_model
+import numpy as np
+import cv2
+import os
+import argparse
 
-# --- CONFIGURATION ---
-# UPDATE: Pointing to the new 'augmented' model
-MODEL_PATH = os.path.join("models", "waste_sorter_model.h5")
-CLASS_NAMES = ['Biowaste', 'Cardboard', 'Glass', 'Metal', 'Paper', 'Plastic']
-IMG_SIZE = (224, 224)
+# 1. 🟢 CORRECT CLASS NAMES
+CLASS_NAMES = ['biowaste', 'cardboard', 'glass', 'metal', 'plastic']
 
-def load_and_prep_image(filename, img_shape=224):
+def load_and_prep_image(image_path):
     """
-    Reads an image from filename, turns it into a tensor,
-    resizes it to (img_shape, img_shape), and rescales it.
+    Reads an image, converts to RGB, and performs a Center Crop.
     """
-    img = tf.io.read_file(filename)
-    # expand_animations=False fixes the .webp crash
-    img = tf.image.decode_image(img, channels=3, expand_animations=False)
-    img.set_shape([None, None, 3]) 
-    img = tf.image.resize(img, size=[img_shape, img_shape])
-    img = img / 255.0
+    img = cv2.imread(image_path)
+    if img is None:
+        print(f"❌ Error: Could not read file {image_path}")
+        return None
+
+    # Convert BGR to RGB
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    # 🟢 SMART ZOOM (Center Crop)
+    h, w, _ = img.shape
+    min_dim = min(h, w)
+    start_x = (w - min_dim) // 2
+    start_y = (h - min_dim) // 2
+    img = img[start_y:start_y+min_dim, start_x:start_x+min_dim]
+
+    # Resize to model size
+    img = cv2.resize(img, (224, 224))
+    img = tf.keras.utils.img_to_array(img)
+    img = np.expand_dims(img, axis=0)
     return img
 
-def predict_single_image(model, filepath):
-    """
-    Predicts a single image and prints the result.
-    """
+def predict_path(model_path, target_path):
+    print(f"⏳ Loading model from {model_path}...")
     try:
-        # Load and preprocess
-        img = load_and_prep_image(filepath)
-        
-        # Make prediction (add batch dimension)
-        pred = model.predict(tf.expand_dims(img, axis=0), verbose=0)
-        
-        # Get the predicted class index
-        pred_class_index = np.argmax(pred)
-        
-        if pred_class_index < len(CLASS_NAMES):
-            pred_class_name = CLASS_NAMES[pred_class_index]
-        else:
-            pred_class_name = "Unknown"
+        model = tf.keras.models.load_model(model_path)
+    except Exception as e:
+        print(f"❌ Error loading model: {e}")
+        return
 
-        confidence = tf.reduce_max(pred) * 100
+    # 🟢 LOGIC: Is it a File or a Folder?
+    image_files = []
+    
+    if os.path.isfile(target_path):
+        # User provided a single file
+        image_files = [target_path]
+        print(f"📂 Single file detected: {target_path}")
+        
+    elif os.path.isdir(target_path):
+        # User provided a folder
+        print(f"📂 Scanning folder: {target_path}")
+        files = os.listdir(target_path)
+        image_files = [os.path.join(target_path, f) for f in files if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
+    else:
+        print(f"❌ Error: Path '{target_path}' does not exist.")
+        return
 
-        print(f"\n📸 Image: {os.path.basename(filepath)}")
-        print(f"🤖 AI Prediction: {pred_class_name}")
-        print(f"📊 Confidence: {confidence:.2f}%")
+    if not image_files:
+        print("❌ No valid images found!")
+        return
+
+    print(f"🔍 Found {len(image_files)} image(s). Starting predictions...\n")
+
+    for file_path in image_files:
+        img = load_and_prep_image(file_path)
+        
+        if img is None:
+            continue
+
+        # Predict
+        predictions = model.predict(img, verbose=0)
+        
+        # Get top prediction
+        class_idx = np.argmax(predictions[0])
+        confidence = np.max(predictions[0])
+        
+        # Display Result
+        predicted_label = CLASS_NAMES[class_idx]
+        file_name = os.path.basename(file_path)
+        
+        print(f"📸 Image: {file_name}")
+        print(f"🤖 Prediction: {predicted_label.upper()}")
+        print(f"📊 Confidence: {confidence*100:.2f}%")
+        
+        if confidence < 0.6:
+            print("⚠️  (Low confidence - Unsure)")
+            
         print("-" * 30)
-        
-    except Exception as e:
-        print(f"⚠️ Error processing {os.path.basename(filepath)}: {e}")
-
-def main():
-    print("⏳ Loading model from:", MODEL_PATH)
-    try:
-        model = load_model(MODEL_PATH)
-        print("✅ Model loaded successfully!")
-    except Exception as e:
-        print(f"❌ Failed to load model: {e}")
-        return
-
-    print("\n--- 🇫🇮 Finnish Waste Sorter AI ---")
-    user_input = input('Enter path to an image OR a folder of images: ').strip().strip('"')
-
-    if not os.path.exists(user_input):
-        print("❌ Error: The path does not exist.")
-        return
-
-    if os.path.isdir(user_input):
-        print(f"\n📂 Scanning folder: {user_input}")
-        valid_extensions = ('.jpg', '.jpeg', '.png', '.webp', '.bmp')
-        
-        files = [f for f in os.listdir(user_input) if f.lower().endswith(valid_extensions)]
-        
-        if not files:
-            print("❌ No images found in this folder.")
-        else:
-            print(f"🔍 Found {len(files)} images. Starting predictions...\n")
-            for file in files:
-                full_path = os.path.join(user_input, file)
-                predict_single_image(model, full_path)
-                
-    elif os.path.isfile(user_input):
-        predict_single_image(model, user_input)
 
 if __name__ == "__main__":
-    main()
+    MODEL_PATH = "models/phase2_finetuned.keras"
+    
+    # 🟢 INTERACTIVE PROMPT
+    print("Tip: You can paste the full path (even with quotes)!")
+    user_input = input("Enter a Folder or specific Image path (default: test_dump): ").strip()
+    
+    # 🟢 THE FIX: Remove quotes that Windows adds
+    user_input = user_input.strip('"').strip("'")
+    
+    # Use default if user hits Enter
+    TARGET_PATH = user_input if user_input else "test_dump"
+    
+    predict_path(MODEL_PATH, TARGET_PATH)

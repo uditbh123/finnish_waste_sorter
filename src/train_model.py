@@ -5,6 +5,7 @@ from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout, Inpu
 from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import RandomFlip, RandomRotation, RandomZoom, RandomContrast
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
 
 # 1. Configuration
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -12,42 +13,85 @@ DATA_DIR = os.path.join(BASE_DIR, "data", "processed")
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-# 2. Settings
+# 2. Settings - UPDATED FOR ANTI-OVERFITTING
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
-EPOCHS_HEAD = 8      # Phase 1: Training the new layers
-EPOCHS_FINE = 8      # Phase 2: Fine-tuning
+EPOCHS_HEAD = 20      # INCREASED: Was 8, now 20
+EPOCHS_FINE = 30      # INCREASED: Was 8, now 30
 LEARNING_RATE = 0.0001
 
+# 🔥 NEW: Add ColorJitter-style augmentation to built-in layers
 def build_augmented_model(num_classes):
     """
-    Builds a MobileNetV2 with built-in Data Augmentation layers.
-    This forces the AI to learn shapes, not just backgrounds.
+    Builds a MobileNetV2 with AGGRESSIVE built-in Data Augmentation.
+    🆕 Now includes better augmentation to break color bias.
     """
     # 1. Define Input
     inputs = Input(shape=(224, 224, 3))
 
-    # 2. Data Augmentation Layers (The "Brain Surgery")
+    # 2. Data Augmentation Layers (ENHANCED)
     x = Sequential([
-        RandomFlip("horizontal_and_vertical"), # Flip left/right/up/down
-        RandomRotation(0.2),                   # Rotate up to 20%
-        RandomZoom(0.2),                       # Zoom in/out up to 20%
-        RandomContrast(0.2),                   # Adjust contrast (lighting changes)
+        RandomFlip("horizontal_and_vertical"),
+        RandomRotation(0.3),  # INCREASED from 0.2 to 0.3 (more rotation)
+        RandomZoom(0.3),      # INCREASED from 0.2 to 0.3
+        RandomContrast(0.3),  # INCREASED from 0.2 to 0.3
+        
+        # 🆕 ADD brightness variation (helps with color bias)
+        tf.keras.layers.RandomBrightness(0.3, value_range=(0, 255)),
+        
     ], name="augmentation_layer")(inputs)
 
     # 3. Base Model (MobileNetV2)
-    # I pass the augmented images 'x' into MobileNet
     base_model = MobileNetV2(weights='imagenet', include_top=False, input_tensor=x)
-    base_model.trainable = False  # Freeze base model initially
+    base_model.trainable = False  # Freeze initially
 
-    # 4. Custom Head (The classifier)
+    # 4. Custom Head with STRONGER regularization
     x = base_model.output
     x = GlobalAveragePooling2D()(x)
-    x = Dropout(0.2)(x)  # Prevents overfitting
+    
+    # 🔥 INCREASED Dropout from 0.2 to 0.5
+    x = Dropout(0.5)(x)  # Was 0.2, now 0.5 (much stronger)
+    
+    # 🆕 ADD second dense layer for better feature learning
+    x = Dense(256, activation='relu', name='dense_intermediate')(x)
+    x = Dropout(0.4)(x)
+    
     outputs = Dense(num_classes, activation='softmax')(x)
 
     model = Model(inputs, outputs)
     return base_model, model
+
+# 🆕 NEW: Callbacks for smart training
+def get_callbacks(model_save_path):
+    """
+    Prevents overfitting by monitoring validation loss
+    """
+    return [
+        # Stop if validation doesn't improve for 8 epochs
+        EarlyStopping(
+            monitor='val_loss',
+            patience=8,
+            restore_best_weights=False,  # Changed to False (ModelCheckpoint handles saving)
+            verbose=1
+        ),
+        
+        # Reduce learning rate if stuck
+        ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=4,
+            min_lr=1e-7,
+            verbose=1
+        ),
+        
+        # Save best model automatically
+        ModelCheckpoint(
+            model_save_path,
+            monitor='val_loss',
+            save_best_only=True,
+            verbose=1
+        )
+    ]
 
 def main():
     print(f"🚀 Found GPU: {len(tf.config.list_physical_devices('GPU')) > 0}")
@@ -75,10 +119,9 @@ def main():
         label_mode='int'
     )
 
-    # --- FIX: Get class names BEFORE caching ---
+    # Get class names BEFORE caching
     class_names = train_ds.class_names
     print(f"✅ Classes found: {class_names}")
-    # -------------------------------------------
 
     # Optimize for performance
     train_ds = train_ds.cache().prefetch(buffer_size=tf.data.AUTOTUNE)
@@ -87,33 +130,95 @@ def main():
     # 2. Build Model
     base_model, model = build_augmented_model(len(class_names))
 
-    model.compile(optimizer=Adam(learning_rate=LEARNING_RATE),
-                  loss='sparse_categorical_crossentropy',
-                  metrics=['accuracy'])
+    # 🆕 COMPILE - Simple version without label_smoothing
+    model.compile(
+        optimizer=Adam(learning_rate=LEARNING_RATE),
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
 
-    # 3. Phase 1: Train Head
-    print("\n🧠 Phase 1: Training Head (with Augmentation)...")
-    history = model.fit(train_ds, validation_data=val_ds, epochs=EPOCHS_HEAD)
+    # 🆕 Show model summary
+    print("\n📊 Model Architecture:")
+    model.summary()
+
+    # 3. Phase 1: Train Head (LONGER)
+    save_path = os.path.join(MODEL_DIR, "waste_sorter_best.h5")
+    
+    print(f"\n🧠 Phase 1: Training Head for {EPOCHS_HEAD} epochs...")
+    print("   (Will auto-stop early if overfitting detected)")
+    
+    history = model.fit(
+        train_ds, 
+        validation_data=val_ds, 
+        epochs=EPOCHS_HEAD,
+        callbacks=get_callbacks(save_path),
+        verbose=1
+    )
+
+    # 🆕 REPORT Phase 1 results
+    print("\n" + "="*60)
+    print("📊 PHASE 1 RESULTS:")
+    final_train_acc = history.history['accuracy'][-1]
+    final_val_acc = history.history['val_accuracy'][-1]
+    gap = final_train_acc - final_val_acc
+    print(f"   Train Accuracy: {final_train_acc*100:.2f}%")
+    print(f"   Val Accuracy:   {final_val_acc*100:.2f}%")
+    print(f"   Gap:            {gap*100:.2f}%")
+    if gap > 0.1:
+        print("   ⚠️  Still overfitting (gap > 10%)")
+    else:
+        print("   ✅ Overfitting under control!")
+    print("="*60)
 
     # 4. Phase 2: Fine-Tuning
-    print("\n🔓 Phase 2: Unfreezing top layers...")
+    print(f"\n🔓 Phase 2: Unfreezing top layers for {EPOCHS_FINE} epochs...")
     base_model.trainable = True
 
-    # Freeze the bottom layers (MobileNetV2 has 155 layers)
+    # Freeze bottom 100 layers
     fine_tune_at = 100
     for layer in base_model.layers[:fine_tune_at]:
         layer.trainable = False
 
-    model.compile(optimizer=Adam(learning_rate=LEARNING_RATE / 10), # Lower LR for fine-tuning
-                  loss='sparse_categorical_crossentropy',
-                  metrics=['accuracy'])
+    print(f"   Trainable layers: {sum([1 for layer in model.layers if layer.trainable])}")
 
-    history_fine = model.fit(train_ds, validation_data=val_ds, epochs=EPOCHS_FINE)
+    model.compile(
+        optimizer=Adam(learning_rate=LEARNING_RATE / 10),
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
 
-    # 5. Save
-    save_path = os.path.join(MODEL_DIR, "waste_sorter_augmented.h5")
-    model.save(save_path)
-    print(f"🎉 Augmented Model Saved to: {save_path}")
+    history_fine = model.fit(
+        train_ds, 
+        validation_data=val_ds, 
+        epochs=EPOCHS_FINE,
+        callbacks=get_callbacks(save_path),
+        verbose=1
+    )
+
+    # 5. Final Report
+    print("\n" + "="*60)
+    print("🎉 TRAINING COMPLETE!")
+    print("="*60)
+    
+    final_train_acc = history_fine.history['accuracy'][-1]
+    final_val_acc = history_fine.history['val_accuracy'][-1]
+    final_gap = final_train_acc - final_val_acc
+    
+    print(f"📊 FINAL RESULTS:")
+    print(f"   Train Accuracy: {final_train_acc*100:.2f}%")
+    print(f"   Val Accuracy:   {final_val_acc*100:.2f}%")
+    print(f"   Gap:            {final_gap*100:.2f}%")
+    print(f"\n💾 Best model saved to: {save_path}")
+    
+    if final_gap > 0.1:
+        print("\n⚠️  STILL OVERFITTING")
+        print("   Next steps:")
+        print("   1. Run augment_finnish.py again with target_count=100")
+        print("   2. Increase Dropout to 0.6 in this script")
+        print("   3. Collect more diverse test images")
+    else:
+        print("\n✅ Model is generalizing well!")
+        print("   Test it on real Finnish products now!")
 
 if __name__ == "__main__":
     main()
