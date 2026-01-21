@@ -101,7 +101,28 @@ Moved away from command-line scripts and built a **Streamlit Web App** (`src/app
 * **UI Polish:** Add a "Feedback Loop" button so users can correct the AI when it makes a mistake.
 ---
 
+## 📅 Dev Log: January 20, 2026
+*Milestone: Solved "Color Bias" & "Texture Traps" via Advanced Augmentation.*
 
+### 🚀 Critical Fix: The "Brown Box Bias" & "Blue Milk Error"
+We discovered the model was overfitting to **color** rather than shape:
+* **The Error:** It classified brown cardboard and blue milk cartons as **Biowaste**.
+* **The Why:** It learned simple rules: "Brown = Compost" and "Blue/Context = Trash".
+* **The Fix:** We implemented a **Color Jitter Pipeline** using `Albumentations` (shifting Hue/Saturation/Brightness).
+* **The Result:** The model now correctly identifies **Blue Valio Cartons** and **Brown Boxes** as Cardboard because it can no longer rely on color—it is forced to look at geometry.
+
+### 🧩 Critical Fix: The "Texture Trap" (Multiple Bottles)
+We found a new bug where **multiple plastic bottles** were classified as **Biowaste**.
+* **The Error:** A pile of clean bottles creates visual chaos/crinkles. The model interpreted "Chaos" as "Compost."
+* **The Fix:** We implemented **Mosaic Augmentation** (`src/augment_finnish.py`).
+    * This script stitches 4 random plastic images into a 2x2 grid.
+    * It teaches the model that "Messy Grids" can still be Plastic.
+* **The Result:** The model now recognizes "clutter" as valid recyclable material, not just organic waste.
+
+### 🛠️ Technical Improvements
+* **Smart Zoom (Center Crop):** Updated `src/predict.py` and `src/app.py` to automatically zoom into the center of images, removing background noise (dirt/grass) that confused the AI.
+* **Flexible Inference:** The CLI script now accepts both single file paths and entire folders, and automatically handles Windows path quotation marks.
+* **Visual Confidence:** The Streamlit app now displays a full probability bar chart, visualizing exactly when the model is "confused" (e.g., 50% Glass vs 50% Plastic).
 
 ## 📂 Project Structure
 
