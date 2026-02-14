@@ -21,3 +21,10 @@ streamlit
 # Utilities
 python-dotenv
 requests
+
+# Data Augmentation (The Gym)
+albumentations
+
+# Web Scraping (The Data Collector)
+duckduckgo_search
+beautifulsoup4

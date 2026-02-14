@@ -2,6 +2,7 @@
 data/
 data/raw/
 data/processed/
+data/rejected/
 
 # Ignore Models (Too big for Git, usually)
 models/*.h5
@@ -16,3 +17,5 @@ venv/
 .vscode/
 
 test_dump/
+
+*.keras

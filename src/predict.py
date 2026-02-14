@@ -94,7 +94,7 @@ if __name__ == "__main__":
     
     # 🟢 INTERACTIVE PROMPT
     print("Tip: You can paste the full path (even with quotes)!")
-    user_input = input("Enter a Folder or specific Image path (default: test_dump): ").strip()
+    user_input = input("Enter a Folder or specific Image path: ").strip()
     
     # 🟢 THE FIX: Remove quotes that Windows adds
     user_input = user_input.strip('"').strip("'")
