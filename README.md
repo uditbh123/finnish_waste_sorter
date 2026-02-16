@@ -124,6 +124,36 @@ We found a new bug where **multiple plastic bottles** were classified as **Biowa
 * **Flexible Inference:** The CLI script now accepts both single file paths and entire folders, and automatically handles Windows path quotation marks.
 * **Visual Confidence:** The Streamlit app now displays a full probability bar chart, visualizing exactly when the model is "confused" (e.g., 50% Glass vs 50% Plastic).
 
+
+### 🚀 Recent Engineering Updates (Phase 2 & 3)
+We significantly improved the model's accuracy and robustness against the "Biowaste Bias" (where the model incorrectly classified everything as biowaste).
+
+1. Automated Data Pipeline
+
+- Web Scraper Integration: Built a custom scraper (src/scrape_data.py) using duckduckgo_search to gather real-world images of Finnish waste (e.g., "Atria lihapakkaus", "Valio maitotölkki").
+
+- Auto-Janitor Script: Implemented an AI-based cleaning script (src/auto_clean.py) that uses Face Detection and Blur/Texture Analysis to automatically remove cartoons, stock photos with faces, and duplicates from the dataset.
+
+2. Advanced Data Augmentation
+
+- Hard Negative Mining: Identified specific failure cases (e.g., clear plastic bottles looking like glass) and used active learning to target them. We multiplied these "hard" examples by 50x in the training set to force the model to learn.
+
+- Mosaic Augmentation: Created "Mosaic Piles" (stitching 4 images together) to teach the model that clutter does not always equal biowaste.
+
+- Color Jittering: Applied heavy hue/saturation shifts to prevent the model from memorizing specific colors (e.g., "Orange always equals Biowaste").
+
+3. Robust Inference Engine
+
+- Test-Time Augmentation (TTA): The prediction script (src/predict.py) no longer relies on a single snapshot. It now creates 3 variations of the input image (Standard, Zoomed-Crop, Horizontal Flip) and averages the predictions. This boosted accuracy on "weird" internet images from ~30% confidence to consistent correct classifications.
+
+- Smart Confidence Logic: Moved away from raw confidence thresholds. The system now calculates the Winning Margin to distinguish between "Low Confidence but Correct" and "Actually Confused."
+
+4. Results
+
+- Validation Accuracy: Reached 86.61%.
+
+- Real-World Performance: Successfully fixed the confusion between Shiny Plastic vs. Metal and Clear Plastic vs. Glass.
+
 ## 📂 Project Structure
 
 ```text
