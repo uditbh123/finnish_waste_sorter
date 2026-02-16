@@ -1,105 +1,105 @@
-import tensorflow as tf
-import numpy as np
-import cv2
 import os
-import argparse
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.preprocessing import image
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
-# 1. 🟢 CORRECT CLASS NAMES
+# 1. Configuration
+MODEL_PATH = "models/phase2_finetuned.keras"
 CLASS_NAMES = ['biowaste', 'cardboard', 'glass', 'metal', 'plastic']
 
-def load_and_prep_image(image_path):
+def process_image_for_tta(img_path):
     """
-    Reads an image, converts to RGB, and performs a Center Crop.
+    Generates 3 versions of the image:
+    1. Normal
+    2. Horizontal Flip
+    3. Center Crop (Zoomed)
     """
-    img = cv2.imread(image_path)
-    if img is None:
-        print(f"❌ Error: Could not read file {image_path}")
-        return None
-
-    # Convert BGR to RGB
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-    # 🟢 SMART ZOOM (Center Crop)
-    h, w, _ = img.shape
-    min_dim = min(h, w)
-    start_x = (w - min_dim) // 2
-    start_y = (h - min_dim) // 2
-    img = img[start_y:start_y+min_dim, start_x:start_x+min_dim]
-
-    # Resize to model size
-    img = cv2.resize(img, (224, 224))
-    img = tf.keras.utils.img_to_array(img)
-    img = np.expand_dims(img, axis=0)
-    return img
-
-def predict_path(model_path, target_path):
-    print(f"⏳ Loading model from {model_path}...")
-    try:
-        model = tf.keras.models.load_model(model_path)
-    except Exception as e:
-        print(f"❌ Error loading model: {e}")
-        return
-
-    # 🟢 LOGIC: Is it a File or a Folder?
-    image_files = []
+    # Load raw image
+    original = image.load_img(img_path, target_size=(256, 256)) # Load larger for cropping
+    img_arr = image.img_to_array(original)
     
-    if os.path.isfile(target_path):
-        # User provided a single file
-        image_files = [target_path]
-        print(f"📂 Single file detected: {target_path}")
-        
-    elif os.path.isdir(target_path):
-        # User provided a folder
-        print(f"📂 Scanning folder: {target_path}")
-        files = os.listdir(target_path)
-        image_files = [os.path.join(target_path, f) for f in files if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
-    else:
-        print(f"❌ Error: Path '{target_path}' does not exist.")
-        return
+    batch = []
 
-    if not image_files:
-        print("❌ No valid images found!")
-        return
+    # 1. Standard (Resized to 224)
+    img_std = tf.image.resize(img_arr, (224, 224))
+    batch.append(img_std)
 
-    print(f"🔍 Found {len(image_files)} image(s). Starting predictions...\n")
+    # 2. Flipped Left/Right (Helps recognize shape regardless of orientation)
+    img_flip = tf.image.flip_left_right(img_std)
+    batch.append(img_flip)
 
-    for file_path in image_files:
-        img = load_and_prep_image(file_path)
-        
-        if img is None:
-            continue
+    # 3. Center Crop (Zoom in to remove background noise)
+    # Crop from 256 -> 224
+    img_crop = tf.image.central_crop(img_arr, central_fraction=0.875) 
+    img_crop = tf.image.resize(img_crop, (224, 224))
+    batch.append(img_crop)
 
-        # Predict
-        predictions = model.predict(img, verbose=0)
+    # Convert to Batch & Preprocess (-1 to 1)
+    batch = np.array(batch)
+    batch = preprocess_input(batch)
+    
+    return batch
+
+def predict_with_tta(model, file_path):
+    try:
+        # Get batch of 3 variations
+        tta_batch = process_image_for_tta(file_path)
         
-        # Get top prediction
-        class_idx = np.argmax(predictions[0])
-        confidence = np.max(predictions[0])
+        # Predict on all 3 at once
+        predictions = model.predict(tta_batch, verbose=0)
         
-        # Display Result
-        predicted_label = CLASS_NAMES[class_idx]
+        # 🟢 THE TRICK: Average the predictions!
+        # This smoothes out the "confused" guesses.
+        avg_pred = np.mean(predictions, axis=0)
+        
+        # Result
+        class_idx = np.argmax(avg_pred)
+        confidence = np.max(avg_pred)
+        label = CLASS_NAMES[class_idx]
+        
         file_name = os.path.basename(file_path)
-        
         print(f"📸 Image: {file_name}")
-        print(f"🤖 Prediction: {predicted_label.upper()}")
-        print(f"📊 Confidence: {confidence*100:.2f}%")
+        print(f"🤖 Prediction: {label.upper()}")
+        print(f"📊 Confidence: {confidence*100:.2f}% (TTA Averaged)")
         
-        if confidence < 0.6:
-            print("⚠️  (Low confidence - Unsure)")
-            
+        if confidence < 0.5:
+             print("⚠️  (Still Unsure - Try a cleaner background)")
+        elif label == "biowaste":
+             # Sanity Check: If it's REALLY sure it's biowaste, it probably is.
+             print("🍏 (Food, Peels, Coffee)")
+        
         print("-" * 30)
 
+    except Exception as e:
+        print(f"❌ Error processing {file_path}: {e}")
+
+def main():
+    print(f"⏳ Loading Model from {MODEL_PATH}...")
+    try:
+        model = tf.keras.models.load_model(MODEL_PATH)
+        print("✅ Model loaded! Using Test-Time Augmentation (TTA).")
+    except Exception as e:
+        print(f"❌ Failed to load model: {e}")
+        return
+
+    print("\nTip: Paste a folder path OR a single image path.")
+    target_path = input("Path: ").strip().strip('"').strip("'")
+    
+    if not target_path: target_path = "test_dump"
+
+    print("-" * 30)
+
+    if os.path.isdir(target_path):
+        files = [f for f in os.listdir(target_path) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
+        if not files: return
+        
+        print(f"📂 Processing {len(files)} images in '{target_path}'...\n")
+        for f in files:
+            predict_with_tta(model, os.path.join(target_path, f))
+            
+    elif os.path.isfile(target_path):
+        predict_with_tta(model, target_path)
+
 if __name__ == "__main__":
-    MODEL_PATH = "models/phase2_finetuned.keras"
-    
-    # 🟢 INTERACTIVE PROMPT
-    print("Tip: You can paste the full path (even with quotes)!")
-    user_input = input("Enter a Folder or specific Image path: ").strip()
-    
-    # 🟢 THE FIX: Remove quotes that Windows adds
-    user_input = user_input.strip('"').strip("'")
-    
-    # Use default if user hits Enter
-    TARGET_PATH = user_input if user_input else "test_dump"
-    
-    predict_path(MODEL_PATH, TARGET_PATH)
+    main()

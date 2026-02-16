@@ -11,7 +11,6 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROCESSED_DIR = os.path.join(BASE_DIR, "data", "processed")
 
 # 2. The "Color Jitter" Pipeline
-# Updated to fix "UserWarnings" about deprecated arguments
 transform = A.Compose([
     A.RandomRotate90(p=0.5),
     A.HorizontalFlip(p=0.5),
@@ -22,13 +21,12 @@ transform = A.Compose([
     A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.5),
 
     # Texture Noise: Fixes "Smooth = Plastic"
-    # Note: If this still warns, it's fine, but this syntax is standard
     A.GaussNoise(var_limit=(10.0, 50.0), p=0.3), 
 
     A.Perspective(scale=(0.05, 0.1), p=0.5),
     A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.2, rotate_limit=30, p=0.7),
     
-    # Updated CoarseDropout syntax for newer Albumentations
+    # Updated CoarseDropout syntax
     A.CoarseDropout(num_holes_range=(4, 8), hole_height_range=(10, 20), hole_width_range=(10, 20), p=0.3)
 ])
 
@@ -99,7 +97,6 @@ if __name__ == "__main__":
     augment_specific_files("plastic", ["atria", "meat", "jauheliha", "coca", "cola"], target_count=50)
     
     # 2. THE NEW WEB DATA (Multiplying the 40 downloads -> 800 images)
-    # We add "web_" to the keyword list
     augment_specific_files("plastic", ["web_"], target_count=20)
     augment_specific_files("glass", ["web_"], target_count=20)
     augment_specific_files("metal", ["web_"], target_count=20)
@@ -112,6 +109,15 @@ if __name__ == "__main__":
     create_mosaic("plastic", num_mosaics=200)
     create_mosaic("cardboard", num_mosaics=100)
     create_mosaic("metal", num_mosaics=100) 
-    create_mosaic("glass", num_mosaics=100) # Added glass mosaics too!
+    create_mosaic("glass", num_mosaics=100)
+
+    # 5. HARD NEGATIVE MINING (The "Fix" for Tricky Images)
+    # These match the files you just moved from test_dump
+    print("\n🔨 Starting Hard Negative Mining...")
+    augment_specific_files("plastic", ["jsdsd", "ssas", "test2"], target_count=50)
+    augment_specific_files("glass", ["asslg"], target_count=50)
+    augment_specific_files("metal", ["download12"], target_count=50)
+    # We add variations for the tricky bio image too
+    augment_specific_files("biowaste", ["download"], target_count=20)
 
     print("\n✅ Done! Dataset is massive and ready.")
