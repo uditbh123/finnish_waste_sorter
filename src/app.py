@@ -1,103 +1,126 @@
 import streamlit as st
 import tensorflow as tf
 import numpy as np
-import cv2
-from PIL import Image
+import os
+from tensorflow.keras.preprocessing import image as keras_image
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
-# 1. Configuration
+# 1. CONFIGURATION
 MODEL_PATH = "models/phase2_finetuned.keras"
-# 🟢 CRITICAL: Must match training folders alphabetically
-CLASS_NAMES = ['biowaste', 'cardboard', 'glass', 'metal', 'plastic']
+CLASS_NAMES = ['Biowaste', 'Cardboard', 'Glass', 'Metal', 'Plastic']
 
-# 2. Page Setup
-st.set_page_config(page_title="SortWise AI", page_icon="♻️")
+st.set_page_config(page_title="SortWise Finland", page_icon="♻️")
 
-st.title("♻️ SortWise: Finnish Waste Sorter")
-st.write("Upload a photo of waste, and the AI will tell you where it belongs.")
-
-# 3. Load Model (Cached so it doesn't reload on every click)
+# 2. LOAD MODEL
 @st.cache_resource
 def load_model():
-    try:
-        model = tf.keras.models.load_model(MODEL_PATH)
-        return model
-    except Exception as e:
-        st.error(f"❌ Error loading model: {e}")
-        return None
+    return tf.keras.models.load_model(MODEL_PATH)
 
-model = load_model()
+try:
+    model = load_model()
+except Exception as e:
+    st.error(f"❌ Error loading model: {e}")
+    st.stop()
 
-# 4. Preprocessing Function (Matches predict.py)
-def process_image(image):
-    # Convert PIL Image to Numpy Array
-    img_array = np.array(image)
+# 3. PREDICTION FUNCTION (The "Mirror" of predict.py)
+def predict_exact_match(file_path):
+    """
+    Uses the EXACT same loading pipeline as predict.py.
+    """
+    # Load image at 256x256 (just like predict.py)
+    img = keras_image.load_img(file_path, target_size=(256, 256))
+    img_arr = keras_image.img_to_array(img)
     
-    # Check if image is grayscale, convert to RGB
-    if len(img_array.shape) == 2:
-        img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
-    elif img_array.shape[2] == 4: # Convert RGBA to RGB
-        img_array = cv2.cvtColor(img_array, cv2.COLOR_RGBA2RGB)
-
-    # 🟢 SMART ZOOM (Center Crop)
-    # This removes background noise (dirt/grass)
-    h, w, _ = img_array.shape
-    min_dim = min(h, w)
-    start_x = (w - min_dim) // 2
-    start_y = (h - min_dim) // 2
-    cropped_img = img_array[start_y:start_y+min_dim, start_x:start_x+min_dim]
-
-    # Resize to model input size
-    resized_img = cv2.resize(cropped_img, (224, 224))
+    batch = []
     
-    # Add batch dimension (1, 224, 224, 3)
-    final_img = np.expand_dims(resized_img, axis=0)
-    return final_img, cropped_img
+    # Variant 1: Standard (Resize to 224)
+    img_std = tf.image.resize(img_arr, (224, 224))
+    batch.append(img_std)
 
-# 5. UI Logic
-uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png", "webp"])
+    # Variant 2: Horizontal Flip
+    img_flip = tf.image.flip_left_right(img_std)
+    batch.append(img_flip)
 
-if uploaded_file is not None:
-    # Display the image
-    image = Image.open(uploaded_file)
+    # Variant 3: Center Crop (Zoom)
+    img_crop = tf.image.central_crop(img_arr, central_fraction=0.875)
+    img_crop = tf.image.resize(img_crop, (224, 224))
+    batch.append(img_crop)
+
+    # 🟢 THE CRITICAL MATH STEP (MobileNetV2 Preprocessing)
+    batch = preprocess_input(np.array(batch))
     
-    # Run Prediction
-    if model:
-        processed_img, debug_view = process_image(image)
-        predictions = model.predict(processed_img)
-        scores = tf.nn.softmax(predictions[0])
-        
-        # Get Top Prediction
-        class_idx = np.argmax(predictions[0])
-        confidence = np.max(predictions[0]) * 100
-        label = CLASS_NAMES[class_idx]
+    # Predict
+    predictions = model.predict(batch, verbose=0)
+    avg_pred = np.mean(predictions, axis=0)
+    
+    return avg_pred
 
-        # --- DISPLAY RESULTS ---
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.image(image, caption="Original Photo", use_container_width=True)
-        
-        with col2:
-            st.subheader(f"Result: **{label.upper()}**")
-            
-            # Color-coded metric
-            if confidence > 85:
-                color = "normal" # Green-ish
-            elif confidence > 60:
-                color = "off" # Yellow-ish
-            else:
-                color = "inverse" # Red-ish warning
-                st.warning("⚠️ The AI is unsure. Check the sorting guide manually.")
+# 4. UI LAYOUT
+st.title("♻️ SortWise Finland")
+st.write("### AI Waste Sorter")
 
-            st.metric(label="Confidence", value=f"{confidence:.1f}%")
-            
-            # 📊 Bar Chart of all classes
-            st.write("---")
-            st.write("**Detailed Breakdown:**")
-            # Create a dictionary for the chart
-            chart_data = {name: float(score) for name, score in zip(CLASS_NAMES, predictions[0])}
-            st.bar_chart(chart_data)
+option = st.radio("Input:", ("Upload Image", "Use Camera"))
 
-        # Debug: Show what the AI actually saw (The cropped version)
-        with st.expander("See what the AI saw (Center Crop)"):
-            st.image(debug_view, caption="Center Cropped Input", width=224)
+# 5. HANDLE IMAGE UPLOAD & SAVE TO TEMP
+temp_file_path = "temp_upload.jpg"
+image_ready = False
+
+if option == "Upload Image":
+    uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png", "webp"])
+    if uploaded_file:
+        # Save to disk so Keras can load it exactly like predict.py
+        with open(temp_file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        image_ready = True
+
+elif option == "Use Camera":
+    camera_photo = st.camera_input("Take a picture")
+    if camera_photo:
+        with open(temp_file_path, "wb") as f:
+            f.write(camera_photo.getbuffer())
+        image_ready = True
+
+# 6. RUN PREDICTION
+if image_ready:
+    # Show the image
+    st.image(temp_file_path, caption="Analyzing...", width=300)
+    
+    with st.spinner("Processing..."):
+        # Call the exact match function
+        probs = predict_exact_match(temp_file_path)
+        
+        top_idx = np.argmax(probs)
+        confidence = probs[top_idx]
+        label = CLASS_NAMES[top_idx]
+        
+        # Calculate Margin
+        sorted_probs = np.sort(probs)[::-1]
+        margin = sorted_probs[0] - sorted_probs[1]
+
+    # Display Result
+    st.divider()
+    
+    if margin > 0.15:
+        st.success(f"## {label.upper()} ✅")
+        st.write(f"Confidence: **{confidence*100:.1f}%**")
+    else:
+        st.warning(f"## {label.upper()} ❓")
+        st.write(f"Confidence: **{confidence*100:.1f}%** (Unsure)")
+
+    # Specific Tips
+    tips = {
+        "Plastic": "Rinse with cold water. Caps can stay on.",
+        "Biowaste": "Use a biodegradable bag.",
+        "Metal": "Rinse food residue. Lids go inside.",
+        "Glass": "Remove caps. No drinking glasses.",
+        "Cardboard": "Flatten boxes to save space."
+    }
+    st.info(f"ℹ️ **Tip:** {tips.get(label, '')}")
+
+    st.write("---")
+    for i, class_name in enumerate(CLASS_NAMES):
+        st.progress(float(probs[i]), text=f"{class_name}: {probs[i]*100:.1f}%")
+
+    # Cleanup temp file
+    if os.path.exists(temp_file_path):
+        os.remove(temp_file_path)
