@@ -165,11 +165,14 @@ finnish-waste-sorter/
 │   ├── app.py          # Streamlit Web Interface (Main Entry Point)
 │   ├── augment_finnish.py # Specific augmentation for Finnish brands
 │   ├── balance_data.py # Class balancing logic
+|   ├── auto_clean.py   # Cleans the data 
+|   ├── scrape.py       # scrape the data from the web
 │   ├── check_data.py   # Utility to verify dataset integrity
 │   ├── predict.py      # CLI Batch inference script
 │   ├── preprocess.py   # Image resizing and cleaning
 │   ├── reset_data.py   # Utility to reset processed data
 │   └── train_model.py  # MobileNetV2 training loop
+|   └── train_model_old.py # previous train script
 ├── test_dump/          # Local testing images (GitIgnored)
 ├── .gitignore          # Files to exclude from Git
 ├── requirements.txt    # Project dependencies
