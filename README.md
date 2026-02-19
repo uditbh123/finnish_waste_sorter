@@ -174,6 +174,16 @@ We rebuilt the inference script so the AI doesn't just "glance" at an image; it 
 * **6-View Test-Time Augmentation (TTA):** Upgraded our 3-crop TTA to a 6-crop TTA.  The script now uses NumPy slicing to generate standard, flipped, center-crop, tight-center-crop, left-crop, and right-crop views. It averages the predictions across all 6 views to easily spot off-center objects.
 * **Entropy & Margin Diagnostics:** Added complex uncertainty math. The script now calculates **Margin** (Top 1 minus Top 2 probability) and **Entropy** (overall chaos of the prediction). This allows the system to clearly distinguish between *"I am confident, but the background is messy"* versus *"I have absolutely no idea what this is."*
 
+### 📊 Model Evaluation: The Confusion Matrix
+To mathematically verify our model's performance and identify remaining edge cases, we generated a Confusion Matrix on our validation dataset (comprising 20% of our total scraped data).
+
+![Confusion Matrix](confusion_matrix.png)
+
+**Key Takeaways from the Matrix:**
+* **The Victory Line:** The strong dark blue diagonal proves the model's 83% accuracy is well-distributed across all 5 classes. It is no longer blindly guessing or suffering from the earlier "Biowaste Bias."
+* **Cardboard & Plastic Mastery:** The model is highly confident and accurate with Cardboard (333 correct) and Plastic (336 correct).
+* **Known Edge Cases:** The light blue squares reveal exactly where the AI struggles, giving us a roadmap for Phase 4. It confused **Plastic with Glass** 40 times (due to clear water bottles looking identical to clear glass) and **Metal with Glass** 27 times (due to shiny glare and reflections).
+
 ## 📂 Project Structure
 
 ```text
