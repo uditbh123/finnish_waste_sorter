@@ -1,10 +1,11 @@
 import os
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout, Input
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.layers import RandomFlip, RandomRotation, RandomZoom, RandomContrast
+from tensorflow.keras.layers import RandomFlip, RandomRotation, RandomZoom, RandomContrast, RandomTranslation
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
 from tensorflow.keras import regularizers
 
@@ -24,6 +25,7 @@ BATCH_SIZE = 32
 EPOCHS_HEAD = 20      # Train custom head
 EPOCHS_FINE = 30      # Fine-tune top layers
 LEARNING_RATE = 0.0001
+MIXUP_ALPHA = 0.4
 
 # ============================================================================
 # 3. DATA AUGMENTATION PIPELINE (SEPARATE FROM MODEL)
@@ -37,28 +39,38 @@ def get_augmentation_layer():
         RandomFlip("horizontal"),           # Flip left/right
         RandomRotation(0.2),                # ±20% rotation
         RandomZoom(0.2),                    # ±20% zoom
+        RandomTranslation(0.15, 0.15),      # Object moves around frame (pile-like scenes)
         RandomContrast(0.3),                # Lighting variation
         tf.keras.layers.RandomBrightness(0.3),  # Brightness variation (fights color bias)
     ], name="data_augmentation")
 
+
+def mixup_batch(images, labels, alpha=MIXUP_ALPHA):
+    """Batch-wise MixUp to reduce background overfitting and pile confusion."""
+    batch_size = tf.shape(images)[0]
+    shuffle_idx = tf.random.shuffle(tf.range(batch_size))
+
+    mixed_images_2 = tf.gather(images, shuffle_idx)
+    mixed_labels_2 = tf.gather(labels, shuffle_idx)
+
+    # Beta(alpha, alpha) sampled using Gamma trick
+    gamma_1 = tf.random.gamma(shape=[batch_size], alpha=alpha)
+    gamma_2 = tf.random.gamma(shape=[batch_size], alpha=alpha)
+    lam = gamma_1 / (gamma_1 + gamma_2)
+
+    lam_img = tf.reshape(lam, [batch_size, 1, 1, 1])
+    lam_lbl = tf.reshape(lam, [batch_size, 1])
+
+    mixed_images = images * lam_img + mixed_images_2 * (1.0 - lam_img)
+    mixed_labels = labels * lam_lbl + mixed_labels_2 * (1.0 - lam_lbl)
+    return mixed_images, mixed_labels
+
 # ============================================================================
-# 4. MODEL ARCHITECTURE (CLEAN - NO AUGMENTATION)
+# 4. MODEL ARCHITECTURE
 # ============================================================================
 def build_model(num_classes):
     """
     Builds a clean MobileNetV2 model for transfer learning.
-    
-    Architecture:
-    - Input: 224x224x3
-    - Base: MobileNetV2 (pretrained on ImageNet)
-    - Head: GlobalAvgPool -> Dropout(0.5) -> Dense(256) -> Dropout(0.4) -> Dense(num_classes)
-    
-    Args:
-        num_classes: Number of output classes
-        
-    Returns:
-        base_model: MobileNetV2 base (for unfreezing later)
-        model: Complete model ready for training
     """
     # 1. Input Layer
     inputs = Input(shape=(224, 224, 3), name="input_image")
@@ -69,93 +81,34 @@ def build_model(num_classes):
         include_top=False,
         input_tensor=inputs
     )
-    base_model.trainable = False  # Freeze initially
+    base_model.trainable = False
 
-    # 3. Custom Classification Head
+    # 3. Custom Head
     x = base_model.output
-    x = GlobalAveragePooling2D(name="global_pool")(x)
-    
-    # Strong regularization to prevent overfitting
-    x = Dropout(0.5, name="dropout_1")(x)
-    
-    # Intermediate dense layer with L2 regularization
-    x = Dense(
-        256, 
-        activation='relu',
-        kernel_regularizer=regularizers.l2(0.01),
-        name="dense_intermediate"
-    )(x)
-    
-    x = Dropout(0.4, name="dropout_2")(x)
-    
-    # Output layer
+    x = GlobalAveragePooling2D()(x)
+    x = Dropout(0.5)(x)
+    x = Dense(256, activation='relu', kernel_regularizer=regularizers.l2(0.01))(x)
+    x = Dropout(0.4)(x)
     outputs = Dense(num_classes, activation='softmax', name="predictions")(x)
 
-    # 4. Build complete model
-    model = Model(inputs, outputs, name="waste_classifier")
-    
+    model = Model(inputs=inputs, outputs=outputs, name="waste_classifier")
     return base_model, model
 
-# ============================================================================
-# 5. TRAINING CALLBACKS
-# ============================================================================
-def get_callbacks(model_save_path):
-    """
-    Returns smart callbacks for training:
-    - EarlyStopping: Stop if validation stops improving
-    - ReduceLROnPlateau: Lower learning rate when stuck
-    - ModelCheckpoint: Save best model automatically
-    """
+def get_callbacks(save_path):
     return [
-        # Stop training if validation loss doesn't improve for 8 epochs
-        EarlyStopping(
-            monitor='val_loss',
-            patience=8,
-            restore_best_weights=False,  # ModelCheckpoint handles this
-            verbose=1,
-            mode='min'
-        ),
-        
-        # Reduce learning rate if validation loss plateaus
-        ReduceLROnPlateau(
-            monitor='val_loss',
-            factor=0.5,           # Reduce LR by half
-            patience=4,            # Wait 4 epochs before reducing
-            min_lr=1e-7,
-            verbose=1,
-            mode='min'
-        ),
-        
-        # Save best model based on validation loss
-        ModelCheckpoint(
-            model_save_path,
-            monitor='val_loss',
-            save_best_only=True,
-            save_weights_only=False,  # Save entire model
-            verbose=1,
-            mode='min'
-        )
+        EarlyStopping(monitor='val_loss', patience=8, restore_best_weights=True, verbose=1),
+        ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=3, verbose=1, min_lr=1e-6),
+        ModelCheckpoint(save_path, monitor='val_loss', save_best_only=True, verbose=1)
     ]
 
 # ============================================================================
-# 6. MAIN TRAINING PIPELINE
+# 5. ENTRY POINT
 # ============================================================================
 def main():
-    print("=" * 70)
-    print("🗑️  FINNISH WASTE CLASSIFIER - TRAINING PIPELINE")
-    print("=" * 70)
-    
-    # Check GPU availability
-    gpus = tf.config.list_physical_devices('GPU')
-    print(f"\n🚀 GPU Available: {len(gpus) > 0}")
-    if len(gpus) > 0:
-        print(f"   Using: {gpus[0].name}")
-    
-    # ========================================================================
-    # STEP 1: LOAD DATASETS
-    # ========================================================================
-    print(f"\n📂 Loading dataset from: {DATA_DIR}")
+    print("🚀 Starting SortWise Training Pipeline...")
 
+    # Load datasets with one-hot encoding for Focal Loss & Mixup
+    print("\n📂 Loading datasets...")
     train_ds = tf.keras.utils.image_dataset_from_directory(
         DATA_DIR,
         validation_split=0.2,
@@ -163,7 +116,7 @@ def main():
         seed=123,
         image_size=IMG_SIZE,
         batch_size=BATCH_SIZE,
-        label_mode='int'  # Integer labels (0, 1, 2, ...)
+        label_mode='categorical'
     )
 
     val_ds = tf.keras.utils.image_dataset_from_directory(
@@ -173,7 +126,7 @@ def main():
         seed=123,
         image_size=IMG_SIZE,
         batch_size=BATCH_SIZE,
-        label_mode='int'
+        label_mode='categorical'
     )
 
     # Get class names
@@ -194,7 +147,6 @@ def main():
     )
     
     # Normalization (both train and val)
-    # MobileNetV2 expects pixel values in [-1, 1] range
     normalization = tf.keras.layers.Rescaling(1./127.5, offset=-1)
     
     print("📊 Normalizing datasets (scaling to [-1, 1])...")
@@ -207,6 +159,9 @@ def main():
         lambda x, y: (normalization(x), y),
         num_parallel_calls=tf.data.AUTOTUNE
     )
+
+    # MixUp helps with multi-object / pile scenes
+    train_ds = train_ds.map(mixup_batch, num_parallel_calls=tf.data.AUTOTUNE)
 
     # Performance optimization
     train_ds = train_ds.cache().prefetch(buffer_size=tf.data.AUTOTUNE)
@@ -223,8 +178,8 @@ def main():
     # Compile model
     model.compile(
         optimizer=Adam(learning_rate=LEARNING_RATE),
-        loss='sparse_categorical_crossentropy',
-        metrics=['accuracy']
+        loss=tf.keras.losses.CategoricalFocalCrossentropy(gamma=2.0, label_smoothing=0.05),
+        metrics=['accuracy', tf.keras.metrics.TopKCategoricalAccuracy(k=2, name='top_2_accuracy')]
     )
 
     # Show architecture
@@ -253,28 +208,8 @@ def main():
         train_ds,
         validation_data=val_ds,
         epochs=EPOCHS_HEAD,
-        callbacks=get_callbacks(save_path),
-        verbose=1
+        callbacks=get_callbacks(save_path)
     )
-
-    # Report Phase 1 results
-    print("\n" + "=" * 70)
-    print("📊 PHASE 1 RESULTS")
-    print("=" * 70)
-    final_train_acc = history.history['accuracy'][-1]
-    final_val_acc = history.history['val_accuracy'][-1]
-    gap = final_train_acc - final_val_acc
-    
-    print(f"   Train Accuracy: {final_train_acc*100:.2f}%")
-    print(f"   Val Accuracy:   {final_val_acc*100:.2f}%")
-    print(f"   Gap:            {gap*100:.2f}%")
-    
-    if gap > 0.15:
-        print("   ⚠️  High overfitting detected (gap > 15%)")
-    elif gap > 0.10:
-        print("   ⚠️  Moderate overfitting (gap 10-15%)")
-    else:
-        print("   ✅ Good generalization!")
 
     # ========================================================================
     # STEP 5: PHASE 2 - FINE-TUNING
@@ -286,7 +221,7 @@ def main():
     # Unfreeze base model
     base_model.trainable = True
 
-    # Freeze bottom 100 layers (keep low-level features stable)
+    # Freeze bottom 100 layers
     fine_tune_at = 100
     for layer in base_model.layers[:fine_tune_at]:
         layer.trainable = False
@@ -300,8 +235,8 @@ def main():
     # Recompile with lower learning rate
     model.compile(
         optimizer=Adam(learning_rate=LEARNING_RATE / 10),
-        loss='sparse_categorical_crossentropy',
-        metrics=['accuracy']
+        loss=tf.keras.losses.CategoricalFocalCrossentropy(gamma=2.0, label_smoothing=0.05),
+        metrics=['accuracy', tf.keras.metrics.TopKCategoricalAccuracy(k=2, name='top_2_accuracy')]
     )
 
     # Fine-tune
@@ -327,17 +262,9 @@ def main():
     print(f"\n📊 FINAL RESULTS:")
     print(f"   Train Accuracy: {final_train_acc*100:.2f}%")
     print(f"   Val Accuracy:   {final_val_acc*100:.2f}%")
-    print(f"   Overfitting Gap: {final_gap*100:.2f}%")
-    
-    print(f"\n💾 Best model saved to:")
-    print(f"   {save_path}")
-    print(f"\n📝 To load model:")
-    print(f"   model = tf.keras.models.load_model('{save_path}')")
-    
-    # Give recommendations
-    print("\n" + "=" * 70)
-    if final_gap > 0.15:
-        print("⚠️  STILL OVERFITTING SIGNIFICANTLY")
+
+    if final_gap > 0.20:
+        print("⚠️  SEVERE OVERFITTING DETECTED")
         print("\n   Recommended next steps:")
         print("   1. Collect more diverse training data (especially Finnish products)")
         print("   2. Increase Dropout to 0.6 in build_model()")
@@ -357,10 +284,7 @@ def main():
         print("   3. Deploy to mobile app or web interface")
     
     print("=" * 70)
-    print("\n🚀 Ready for testing! Run: python src/test_model.py")
+    print("\n🚀 Ready for testing! Run: python src/predict.py")
 
-# ============================================================================
-# 7. ENTRY POINT
-# ============================================================================
 if __name__ == "__main__":
     main()
