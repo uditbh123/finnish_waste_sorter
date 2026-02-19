@@ -154,6 +154,26 @@ We significantly improved the model's accuracy and robustness against the "Biowa
 
 - Real-World Performance: Successfully fixed the confusion between Shiny Plastic vs. Metal and Clear Plastic vs. Glass.
 
+## 📅 Dev Log: February 19, 2026
+*Milestone: Deep Learning Pipeline Overhaul & Webcam Integration.*
+
+Today, we completely rewrote the internal logic of our training and inference scripts to solve the "Domain Shift" problem (where the model memorizes backgrounds instead of the trash itself). We also unlocked real-time webcam testing.
+
+### 🎥 The Webcam Milestone (`src/app.py`)
+Up until now, we relied on static image uploads. Today, we fully integrated Streamlit's `st.camera_input` into our inference pipeline. The app now takes a live photo, applies our normalization math, runs it through our multi-crop AI, and outputs a prediction in seconds. This brings the project to its final intended form: a real-world, interactive tool.
+
+### 🧠 Logic Overhaul: `train_model.py`
+We changed how the model learns to force it to look at textures instead of backgrounds:
+* **Label Encoding Shift:** Changed `label_mode='int'` to `'categorical'`. This one-hot encoding was required to unlock advanced loss and augmentation math.
+* **MixUp Augmentation:** Added a custom `mixup_batch()` function. Instead of feeding the model one image, it blends two random images and their labels together (e.g., 60% plastic, 40% cardboard).  This completely destroys the background context, forcing the AI to learn raw material textures. 
+* **Focal Loss:** Replaced standard crossentropy with `CategoricalFocalCrossentropy`. Standard loss treats all mistakes equally; Focal Loss mathematically ignores easy classes (like Cardboard) and aggressively penalizes the model for missing edge cases (like Clear Plastic).
+* **Top-2 Accuracy Metric:** Added `TopKCategoricalAccuracy(k=2)`. Since trash can be highly ambiguous, we now track if the correct answer was at least in the model's top two guesses.
+
+### 🔬 Logic Overhaul: `predict.py`
+We rebuilt the inference script so the AI doesn't just "glance" at an image; it scans it thoroughly:
+* **6-View Test-Time Augmentation (TTA):** Upgraded our 3-crop TTA to a 6-crop TTA.  The script now uses NumPy slicing to generate standard, flipped, center-crop, tight-center-crop, left-crop, and right-crop views. It averages the predictions across all 6 views to easily spot off-center objects.
+* **Entropy & Margin Diagnostics:** Added complex uncertainty math. The script now calculates **Margin** (Top 1 minus Top 2 probability) and **Entropy** (overall chaos of the prediction). This allows the system to clearly distinguish between *"I am confident, but the background is messy"* versus *"I have absolutely no idea what this is."*
+
 ## 📂 Project Structure
 
 ```text
