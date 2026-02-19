@@ -10,10 +10,12 @@ CLASS_NAMES = ['biowaste', 'cardboard', 'glass', 'metal', 'plastic']
 
 def process_image_for_tta(img_path):
     """
-    Generates 3 versions of the image:
+    Generates multiple versions of the image:
     1. Normal
     2. Horizontal Flip
     3. Center Crop (Zoomed)
+    4-5. Side crops (helps when object is not centered)
+    6. Slightly stronger center zoom
     """
     # Load raw image
     original = image.load_img(img_path, target_size=(256, 256)) # Load larger for cropping
@@ -30,10 +32,20 @@ def process_image_for_tta(img_path):
     batch.append(img_flip)
 
     # 3. Center Crop (Zoom in to remove background noise)
-    # Crop from 256 -> 224
     img_crop = tf.image.central_crop(img_arr, central_fraction=0.875) 
     img_crop = tf.image.resize(img_crop, (224, 224))
     batch.append(img_crop)
+
+    # 4/5. Side crops (object often off-center in real photos)
+    left_crop = img_arr[:, :224, :]
+    right_crop = img_arr[:, 32:256, :]
+    batch.append(tf.image.resize(left_crop, (224, 224)))
+    batch.append(tf.image.resize(right_crop, (224, 224)))
+
+    # 6. Stronger center crop to suppress cluttered background
+    tight_crop = tf.image.central_crop(img_arr, central_fraction=0.75)
+    tight_crop = tf.image.resize(tight_crop, (224, 224))
+    batch.append(tight_crop)
 
     # Convert to Batch & Preprocess (-1 to 1)
     batch = np.array(batch)
@@ -43,31 +55,40 @@ def process_image_for_tta(img_path):
 
 def predict_with_tta(model, file_path):
     try:
-        # Get batch of 3 variations
+        # Get batch of 6 variations
         tta_batch = process_image_for_tta(file_path)
         
-        # Predict on all 3 at once
+        # Predict on all 6 at once
         predictions = model.predict(tta_batch, verbose=0)
         
         # 🟢 THE TRICK: Average the predictions!
         # This smoothes out the "confused" guesses.
         avg_pred = np.mean(predictions, axis=0)
         
-        # Result
+   
+        # Result + uncertainty metrics
         class_idx = np.argmax(avg_pred)
         confidence = np.max(avg_pred)
         label = CLASS_NAMES[class_idx]
+        entropy = -np.sum(avg_pred * np.log(np.clip(avg_pred, 1e-8, 1.0)))
+        sorted_pred = np.sort(avg_pred)[::-1]
+        margin = sorted_pred[0] - sorted_pred[1]
         
         file_name = os.path.basename(file_path)
         print(f"📸 Image: {file_name}")
         print(f"🤖 Prediction: {label.upper()}")
         print(f"📊 Confidence: {confidence*100:.2f}% (TTA Averaged)")
+        print(f"📉 Margin(top1-top2): {margin*100:.2f}%")
+        print(f"🧪 Entropy: {entropy:.3f}")
         
-        if confidence < 0.5:
-             print("⚠️  (Still Unsure - Try a cleaner background)")
+
+        if confidence < 0.50 and margin < 0.12:
+             print("⚠️  Very uncertain: likely heavy background/domain shift.")
+        elif confidence < 0.50 and margin >= 0.12:
+             print("ℹ️  Low confidence but clear winner by margin.")
         elif label == "biowaste":
-             # Sanity Check: If it's REALLY sure it's biowaste, it probably is.
-             print("🍏 (Food, Peels, Coffee)")
+          
+             print("🍏 Sanity check: verify visible organic texture, not plastic pile.")
         
         print("-" * 30)
 
